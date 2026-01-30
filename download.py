@@ -24,7 +24,7 @@ def get_args():
     parser.add_argument(
         'model_id',
         type=str,
-        help='CivitAI Download Model ID, eg: 46846'
+        help='CivitAI Model ID or comma-separated list (eg: 46846 or 1535275,1188894,1122976)'        
     )
 
     parser.add_argument(
@@ -173,10 +173,15 @@ def main():
     if not token:
         token = prompt_for_civitai_token()
 
-    try:
-        download_file(args.model_id, args.output_path, token)
-    except Exception as e:
-        print(f'ERROR: {e}')
+    # Split model IDs by comma and strip whitespace
+    model_ids = [mid.strip() for mid in args.model_id.split(',') if mid.strip()]
+
+    for model_id in model_ids:
+        print(f'\n=== Downloading model ID: {model_id} ===')
+        try:
+            download_file(model_id, args.output_path, token)
+        except Exception as e:
+            print(f'ERROR downloading model {model_id}: {e}')
 
 
 if __name__ == '__main__':
