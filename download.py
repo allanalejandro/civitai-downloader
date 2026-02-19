@@ -63,6 +63,22 @@ def prompt_for_civitai_token():
 
 
 
+def download_file(model_id: str, output_path: str, token: str):
+    url = f"{CIVITAI_BASE_URL}/{model_id}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "User-Agent": USER_AGENT,
+    }
+
+    print(f"=== Downloading model ID: {model_id} ===")
+
+    with requests.get(url, headers=headers, stream=True, allow_redirects=True) as r:
+        try:
+            r.raise_for_status()
+        except requests.HTTPError as e:
+            raise Exception(f"HTTP Error {r.status_code}: {r.reason}") from e
+
+        # Determine filename
         filename = None
         content_disposition = r.headers.get("Content-Disposition")
         if content_disposition and "filename=" in content_disposition:
@@ -106,6 +122,7 @@ def prompt_for_civitai_token():
                     zip_ref.extractall(os.path.dirname(output_file))
             except Exception as e:
                 print(f"ERROR: Failed to unzip file: {e}")
+
 
 
 
