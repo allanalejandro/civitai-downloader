@@ -70,13 +70,28 @@ def download_file(model_id: str, output_path: str, token: str):
     url = f'{CIVITAI_BASE_URL}/{model_id}'
     request = urllib.request.Request(url, headers=headers)
 
-    # Let urllib automatically follow redirects
+    # FIRST REQUEST (authenticated)
     response = urllib.request.urlopen(request)
+
+    # Expect redirect
+    if response.status not in (301, 302, 303, 307, 308):
+        raise Exception(f'Unexpected response {response.status}')
+
+    redirect_url = response.getheader('Location')
+    if not redirect_url:
+        raise Exception('No redirect URL found')
+
+    # SECOND REQUEST (NO AUTH HEADER)
+    download_request = urllib.request.Request(
+        redirect_url,
+        headers={'User-Agent': USER_AGENT}
+    )
+
+    response = urllib.request.urlopen(download_request)
 
     if response.status != 200:
         raise Exception(f'HTTP Error {response.status}')
 
-    # Extract filename from Content-Disposition header
     content_disposition = response.getheader('Content-Disposition')
     filename = None
 
@@ -84,9 +99,7 @@ def download_file(model_id: str, output_path: str, token: str):
         filename = content_disposition.split('filename=')[1].strip('"')
 
     if not filename:
-        # Fallback to URL-based filename
-        final_url = response.geturl()
-        filename = final_url.split('/')[-1].split('?')[0]
+        filename = redirect_url.split('/')[-1].split('?')[0]
 
     output_file = os.path.join(output_path, filename)
 
@@ -118,19 +131,8 @@ def download_file(model_id: str, output_path: str, token: str):
 
     sys.stdout.write('\n')
 
-    elapsed = time.time() - start_time
-    minutes, seconds = divmod(int(elapsed), 60)
-
     print(f'Download completed: {filename}')
-    print(f'Time taken: {minutes}m {seconds}s')
 
-    if output_file.endswith('.zip'):
-        print('Extracting ZIP archive...')
-        try:
-            with zipfile.ZipFile(output_file, 'r') as zip_ref:
-                zip_ref.extractall(os.path.dirname(output_file))
-        except Exception as e:
-            print(f'ERROR: Failed to unzip file: {e}')
 
 
 def main():
