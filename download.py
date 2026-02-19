@@ -7,6 +7,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
+import requests
 
 
 CHUNK_SIZE = 1638400
@@ -61,77 +62,50 @@ def prompt_for_civitai_token():
     return token
 
 
-def download_file(model_id: str, output_path: str, token: str):
-    headers = {
-        'Authorization': f'Bearer {token}',
-        'User-Agent': USER_AGENT,
-    }
 
-    url = f'{CIVITAI_BASE_URL}/{model_id}'
-    request = urllib.request.Request(url, headers=headers)
+        filename = None
+        content_disposition = r.headers.get("Content-Disposition")
+        if content_disposition and "filename=" in content_disposition:
+            filename = content_disposition.split("filename=")[1].strip('"')
 
-    # FIRST REQUEST (authenticated)
-    response = urllib.request.urlopen(request)
+        if not filename:
+            filename = r.url.split("/")[-1].split("?")[0]
 
-    # Expect redirect
-    if response.status not in (301, 302, 303, 307, 308):
-        raise Exception(f'Unexpected response {response.status}')
+        output_file = os.path.join(output_path, filename)
+        total_size = int(r.headers.get("Content-Length", 0))
+        downloaded = 0
+        start_time = time.time()
 
-    redirect_url = response.getheader('Location')
-    if not redirect_url:
-        raise Exception('No redirect URL found')
+        with open(output_file, "wb") as f:
+            for chunk in r.iter_content(chunk_size=CHUNK_SIZE):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
 
-    # SECOND REQUEST (NO AUTH HEADER)
-    download_request = urllib.request.Request(
-        redirect_url,
-        headers={'User-Agent': USER_AGENT}
-    )
+                    if total_size:
+                        progress = downloaded / total_size
+                        elapsed = time.time() - start_time
+                        speed = (downloaded / (1024 ** 2)) / elapsed if elapsed > 0 else 0
+                        sys.stdout.write(
+                            f"\rDownloading: {filename} "
+                            f"[{progress*100:.2f}%] - {speed:.2f} MB/s"
+                        )
+                        sys.stdout.flush()
 
-    response = urllib.request.urlopen(download_request)
+        sys.stdout.write("\n")
+        elapsed = time.time() - start_time
+        minutes, seconds = divmod(int(elapsed), 60)
+        print(f"Download completed: {filename}")
+        print(f"Time taken: {minutes}m {seconds}s")
 
-    if response.status != 200:
-        raise Exception(f'HTTP Error {response.status}')
-
-    content_disposition = response.getheader('Content-Disposition')
-    filename = None
-
-    if content_disposition and 'filename=' in content_disposition:
-        filename = content_disposition.split('filename=')[1].strip('"')
-
-    if not filename:
-        filename = redirect_url.split('/')[-1].split('?')[0]
-
-    output_file = os.path.join(output_path, filename)
-
-    total_size = response.getheader('Content-Length')
-    total_size = int(total_size) if total_size else None
-
-    downloaded = 0
-    start_time = time.time()
-
-    with open(output_file, 'wb') as f:
-        while True:
-            chunk = response.read(CHUNK_SIZE)
-            if not chunk:
-                break
-
-            f.write(chunk)
-            downloaded += len(chunk)
-
-            if total_size:
-                progress = downloaded / total_size
-                elapsed = time.time() - start_time
-                speed = (downloaded / (1024 ** 2)) / elapsed if elapsed > 0 else 0
-
-                sys.stdout.write(
-                    f'\rDownloading: {filename} '
-                    f'[{progress*100:.2f}%] - {speed:.2f} MB/s'
-                )
-                sys.stdout.flush()
-
-    sys.stdout.write('\n')
-
-    print(f'Download completed: {filename}')
+        # Extract ZIP files automatically
+        if output_file.endswith(".zip"):
+            print("Extracting ZIP archive...")
+            try:
+                with zipfile.ZipFile(output_file, "r") as zip_ref:
+                    zip_ref.extractall(os.path.dirname(output_file))
+            except Exception as e:
+                print(f"ERROR: Failed to unzip file: {e}")
 
 
 
