@@ -67,103 +67,70 @@ def download_file(model_id: str, output_path: str, token: str):
         'User-Agent': USER_AGENT,
     }
 
-    # Disable automatic redirect handling
-    class NoRedirection(urllib.request.HTTPErrorProcessor):
-        def http_response(self, request, response):
-            return response
-        https_response = http_response
-
     url = f'{CIVITAI_BASE_URL}/{model_id}'
     request = urllib.request.Request(url, headers=headers)
-    opener = urllib.request.build_opener(NoRedirection)
-    response = opener.open(request)
 
-    if response.status in [301, 302, 303, 307, 308]:
-        redirect_url = response.getheader('Location')
+    # Let urllib automatically follow redirects
+    response = urllib.request.urlopen(request)
 
-        # Handle relative redirects
-        if redirect_url.startswith('/'):
-            base_url = urlparse(url)
-            redirect_url = f"{base_url.scheme}://{base_url.netloc}{redirect_url}"
+    if response.status != 200:
+        raise Exception(f'HTTP Error {response.status}')
 
-        # Extract filename from the redirect URL
-        parsed_url = urlparse(redirect_url)
-        query_params = parse_qs(parsed_url.query)
-        content_disposition = query_params.get('response-content-disposition', [None])[0]
+    # Extract filename from Content-Disposition header
+    content_disposition = response.getheader('Content-Disposition')
+    filename = None
 
-        if content_disposition and 'filename=' in content_disposition:
-            filename = unquote(content_disposition.split('filename=')[1].strip('"'))
-        else:
-            # Fallback: extract filename from URL path
-            path = parsed_url.path
-            if path and '/' in path:
-                filename = path.split('/')[-1]
-            else:
-                filename = 'downloaded_file'
+    if content_disposition and 'filename=' in content_disposition:
+        filename = content_disposition.split('filename=')[1].strip('"')
 
-            if not filename:
-                raise Exception('Unable to determine filename')
-
-        response = urllib.request.urlopen(redirect_url)
-    elif response.status == 404:
-        raise Exception('File not found')
-    else:
-        raise Exception('No redirect found, something went wrong')
-
-    total_size = response.getheader('Content-Length')
-
-    if total_size is not None:
-        total_size = int(total_size)
+    if not filename:
+        # Fallback to URL-based filename
+        final_url = response.geturl()
+        filename = final_url.split('/')[-1].split('?')[0]
 
     output_file = os.path.join(output_path, filename)
 
+    total_size = response.getheader('Content-Length')
+    total_size = int(total_size) if total_size else None
+
+    downloaded = 0
+    start_time = time.time()
+
     with open(output_file, 'wb') as f:
-        downloaded = 0
-        start_time = time.time()
-
         while True:
-            chunk_start_time = time.time()
-            buffer = response.read(CHUNK_SIZE)
-            chunk_end_time = time.time()
-
-            if not buffer:
+            chunk = response.read(CHUNK_SIZE)
+            if not chunk:
                 break
 
-            downloaded += len(buffer)
-            f.write(buffer)
-            chunk_time = chunk_end_time - chunk_start_time
+            f.write(chunk)
+            downloaded += len(chunk)
 
-            if chunk_time > 0:
-                speed = len(buffer) / chunk_time / (1024 ** 2)  # Speed in MB/s
-
-            if total_size is not None:
+            if total_size:
                 progress = downloaded / total_size
-                sys.stdout.write(f'\rDownloading: {filename} [{progress*100:.2f}%] - {speed:.2f} MB/s')
+                elapsed = time.time() - start_time
+                speed = (downloaded / (1024 ** 2)) / elapsed if elapsed > 0 else 0
+
+                sys.stdout.write(
+                    f'\rDownloading: {filename} '
+                    f'[{progress*100:.2f}%] - {speed:.2f} MB/s'
+                )
                 sys.stdout.flush()
 
-    end_time = time.time()
-    time_taken = end_time - start_time
-    hours, remainder = divmod(time_taken, 3600)
-    minutes, seconds = divmod(remainder, 60)
-
-    if hours > 0:
-        time_str = f'{int(hours)}h {int(minutes)}m {int(seconds)}s'
-    elif minutes > 0:
-        time_str = f'{int(minutes)}m {int(seconds)}s'
-    else:
-        time_str = f'{int(seconds)}s'
-
     sys.stdout.write('\n')
-    print(f'Download completed. File saved as: {filename}')
-    print(f'Downloaded in {time_str}')
+
+    elapsed = time.time() - start_time
+    minutes, seconds = divmod(int(elapsed), 60)
+
+    print(f'Download completed: {filename}')
+    print(f'Time taken: {minutes}m {seconds}s')
 
     if output_file.endswith('.zip'):
-        print('Note: The downloaded file is a ZIP archive.')
+        print('Extracting ZIP archive...')
         try:
             with zipfile.ZipFile(output_file, 'r') as zip_ref:
                 zip_ref.extractall(os.path.dirname(output_file))
         except Exception as e:
-            print(f'ERROR: Failed to unzip the file. {e}')
+            print(f'ERROR: Failed to unzip file: {e}')
 
 
 def main():
